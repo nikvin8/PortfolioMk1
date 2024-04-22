@@ -1,0 +1,121 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+from polygon import RESTClient
+
+
+# Upload API key
+def load_api_key(file_path):
+    with open(file_path, 'r') as file:
+        return file.read().strip()
+
+
+# Request ticker data
+def fetch_data(tickers, api_key):
+    day = datetime.today().date()
+    client = RESTClient(api_key=api_key)
+    data = pd.DataFrame()
+
+    for ticker in tickers:
+        agg = [a for a in client.list_aggs(ticker=ticker,
+                                           multiplier=1,
+                                           timespan="day",
+                                           from_="2023-01-01",
+                                           to=day,
+                                           limit=50000)]
+        df = pd.DataFrame(agg)
+        data[f'Date_{ticker}'] = pd.to_datetime(df['timestamp'], unit='ms')
+        data[f'Price_open_{ticker}'] = df['open']
+        data[f'Price_close_{ticker}'] = df['close']
+
+    return data
+
+
+# We convert the date taking into account the trading schedule for cryptocurrency and classic stock
+def clean_data(data):
+    ticker_0, ticker_1 = tickers if len(data[f'Date_{tickers[0]}'].dropna()) > len(
+        data[f'Date_{tickers[1]}'].dropna()) else reversed(tickers)
+
+    date_stock_trading = data.dropna().set_index(f'Date_{ticker_0}').index.date
+
+    clean_data = {}
+
+    for index, row in data.iterrows():
+        date = row[f'Date_{ticker_1}'].date()
+        if date in date_stock_trading:
+            clean_data.setdefault('Date', []).append(date)
+            clean_data.setdefault(f'Price_open_{ticker_1}',
+                                  []).append(row[f'Price_open_{ticker_1}'])
+            clean_data.setdefault(f'Price_close_{ticker_1}',
+                                  []).append(row[f'Price_close_{ticker_1}'])
+
+    clean_data = pd.DataFrame(clean_data)
+    clean_data[f'Price_open_{ticker_0}'] = data[f'Price_open_{ticker_0}']
+    clean_data[f'Price_close_{ticker_0}'] = data[f'Price_close_{ticker_0}']
+
+    return clean_data
+
+
+def calculate_percentage(clean_data):
+    data_per = pd.DataFrame()
+    data_per['Date'] = clean_data['Date']
+
+    for ticker in tickers:
+        data_per[f'Percentage_{ticker}'] = (clean_data[f'Price_close_{ticker}'].to_numpy() - clean_data[
+            f'Price_open_{ticker}'].to_numpy()) / clean_data[f'Price_open_{ticker}'].to_numpy()
+
+    return data_per
+
+
+def calculate_correlation(data_per, period=5):
+    data_corr = {}
+
+    for index in range(period, len(data_per)):
+        price_0 = data_per[f'Percentage_{tickers[0]}'][index - period:index].values
+        price_1 = data_per[f'Percentage_{tickers[1]}'][index - period:index].values
+
+        data_corr.setdefault('Date', []).append(data_per.loc[index, 'Date'])
+        data_corr.setdefault('Correlation', []).append(np.corrcoef(price_0, price_1)[0, 1])
+
+    return pd.DataFrame(data_corr)
+
+
+if __name__ == '__main__':
+    api_key = load_api_key('api_key.txt')  # Securely load API key from a file
+
+    tickers = ['I:NDX', 'X:BTCUSD']
+
+    # Fetching data...
+    data = fetch_data(tickers, api_key)
+    data.to_csv('data_api.csv', index=False)
+    # Data fetched and saved.
+
+    # Cleaning data...
+    clean_data = clean_data(data)
+    clean_data.to_csv('clean_data.csv', index=False)
+    # Data cleaned and saved.
+
+    # Calculate percantage
+    data_per = calculate_percentage(clean_data)
+    data_per.to_csv('data_per.csv', index=False)
+
+    # Calculating correlation...
+    data_corr = calculate_correlation(data_per)
+    data_corr.to_csv('data_corr.csv', index=False)
+    # Correlation calculated and saved.
+
+    # Visualization correlation
+
+    fig, axs = plt.subplots(1, 1, figsize=(12, 10), sharex=True)
+
+    # Plotting Correlation
+    axs.plot(data_corr['Date'], data_corr['Correlation'], marker='o', linestyle='-', color='b')
+    axs.set_ylabel('Correlation', fontsize=12)
+    axs.set_title(f'Correlation between {tickers[0]} and {tickers[1]}', fontsize=14)
+    axs.grid(True, which='both', linestyle='--', linewidth=0.5)
+    axs.legend([f'Correlation {tickers[0]} and {tickers[1]}'], loc='upper left', fontsize=10)
+
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
