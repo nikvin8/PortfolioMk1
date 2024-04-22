@@ -1,4 +1,4 @@
-5-day rolling correlation between Bitcoin and Nasdaq.
+5-day rolling correlation between Nasdaq and Bitcoin.
 
 Basic code set for visualizing correlation
 
